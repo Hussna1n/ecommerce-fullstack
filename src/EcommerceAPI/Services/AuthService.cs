@@ -81,8 +81,7 @@ public class ProductService(AppDbContext db) : IProductService
         return new PagedResult<Product>(items, total, page, pageSize);
     }
 
-    public async Task<Product?> GetByIdAsync(int id) =>
-        await db.Products.FindAsync(id);
+    public async Task<Product?> GetByIdAsync(int id) => await db.Products.FindAsync(id);
 
     public async Task<Product> CreateAsync(CreateProductDto dto)
     {
@@ -98,7 +97,6 @@ public class ProductService(AppDbContext db) : IProductService
     {
         var p = await db.Products.FindAsync(id) ?? throw new KeyNotFoundException();
         if (dto.Name is not null) p.Name = dto.Name;
-        if (dto.Description is not null) p.Description = dto.Description;
         if (dto.Price.HasValue) p.Price = dto.Price.Value;
         if (dto.Stock.HasValue) p.Stock = dto.Stock.Value;
         if (dto.IsActive.HasValue) p.IsActive = dto.IsActive.Value;
@@ -114,5 +112,58 @@ public class ProductService(AppDbContext db) : IProductService
     }
 
     public async Task<IEnumerable<string>> GetCategoriesAsync() =>
-        await db.Products.Where(p => p.IsActive).Select(p => p.Category).Distinct().ToListAsync();
+        await db.Products.Select(p => p.Category).Distinct().ToListAsync();
 }
+
+public interface IOrderService
+{
+    Task<IEnumerable<Order>> GetUserOrdersAsync(int userId);
+    Task<Order?> GetByIdAsync(int id, int userId);
+    Task<Order> CreateAsync(int userId, CreateOrderDto dto);
+    Task CancelAsync(int id, int userId);
+}
+
+public class OrderService(AppDbContext db) : IOrderService
+{
+    public async Task<IEnumerable<Order>> GetUserOrdersAsync(int userId) =>
+        await db.Orders.Include(o => o.Items).ThenInclude(i => i.Product)
+            .Where(o => o.UserId == userId).OrderByDescending(o => o.CreatedAt).ToListAsync();
+
+    public async Task<Order?> GetByIdAsync(int id, int userId) =>
+        await db.Orders.Include(o => o.Items).ThenInclude(i => i.Product)
+            .FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId);
+
+    public async Task<Order> CreateAsync(int userId, CreateOrderDto dto)
+    {
+        var order = new Order { UserId = userId, ShippingAddress = dto.ShippingAddress };
+        foreach (var item in dto.Items)
+        {
+            var product = await db.Products.FindAsync(item.ProductId)
+                ?? throw new KeyNotFoundException($"Product {item.ProductId} not found");
+            if (product.Stock < item.Quantity) throw new InvalidOperationException("Insufficient stock");
+            product.Stock -= item.Quantity;
+            order.Items.Add(new OrderItem { ProductId = item.ProductId,
+                Quantity = item.Quantity, UnitPrice = product.Price });
+            order.TotalAmount += product.Price * item.Quantity;
+        }
+        db.Orders.Add(order);
+        await db.SaveChangesAsync();
+        return order;
+    }
+
+    public async Task CancelAsync(int id, int userId)
+    {
+        var order = await db.Orders.Include(o => o.Items).ThenInclude(i => i.Product)
+            .FirstOrDefaultAsync(o => o.Id == id && o.UserId == userId)
+            ?? throw new KeyNotFoundException();
+        if (order.Status != "Pending") throw new InvalidOperationException("Cannot cancel non-pending order");
+        order.Status = "Cancelled";
+        foreach (var item in order.Items) item.Product.Stock += item.Quantity;
+        await db.SaveChangesAsync();
+    }
+}
+
+public interface ICartService { }
+public class CartService : ICartService { }
+public interface IPaymentService { }
+public class PaymentService : IPaymentService { }
