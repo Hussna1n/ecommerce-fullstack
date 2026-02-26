@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { productApi } from '../../api';
 import { Product, PagedResult } from '../../types';
 import ProductCard from '../../components/ProductCard';
-import { Search, Filter } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 export default function Home() {
   const [products, setProducts] = useState<Product[]>([]);
